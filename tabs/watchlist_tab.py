@@ -114,6 +114,11 @@ def render_watchlist_tab():
 
         prev_checked = st.session_state.get(prev_key, False)
 
+        # Restore checkbox if the user cancelled an "uncheck while in portfolio" dialog
+        restore_key = f"wl_restore_{ticker}"
+        if st.session_state.pop(restore_key, False):
+            st.session_state[ck_key] = True
+
         # Main row
         c = st.columns(COLS)
         with c[0]:
@@ -164,8 +169,7 @@ def render_watchlist_tab():
                     st.rerun()
             with n_col:
                 if st.button("Keep in portfolio", key=f"wl_cup_n_{ticker}"):
-                    # Restore the checkbox so it reflects portfolio membership
-                    st.session_state[ck_key]   = True
+                    st.session_state[restore_key] = True
                     st.session_state[prev_key] = True
                     st.session_state.pop(f"wl_cup_{ticker}", None)
                     st.rerun()

@@ -109,7 +109,10 @@ def portfolio_vs_benchmark(
     portfolio_rows: list[dict],
     benchmark: str = BENCHMARK_TICKER,
 ) -> pd.DataFrame:
-    """Build equal-weight cumulative return series rebased to 100 at earliest purchase date.
+    """Build equal-weight cumulative return series rebased to 100.
+
+    Each ticker contributes returns only from its own purchase date, so
+    stocks bought recently don't retroactively inflate the portfolio history.
 
     Returns a DataFrame with columns "Portfolio" and the benchmark ticker.
     Returns empty DataFrame if price data cannot be fetched.
@@ -120,29 +123,32 @@ def portfolio_vs_benchmark(
     earliest = min(r["date_bought"] for r in portfolio_rows)
     start = earliest.strftime("%Y-%m-%d")
 
-    # Collect Close series per ticker
-    price_series: dict[str, pd.Series] = {}
+    # Collect daily returns per ticker, each starting from its own purchase date
+    returns_by_ticker: dict[str, pd.Series] = {}
     for row in portfolio_rows:
         ticker = row["ticker"]
-        hist = get_price_history_range(ticker, start=start)
+        ticker_start = row["date_bought"].strftime("%Y-%m-%d")
+        hist = get_price_history_range(ticker, start=ticker_start)
         if not hist.empty:
-            price_series[ticker] = hist["Close"]
+            returns_by_ticker[ticker] = hist["Close"].pct_change()
 
-    if not price_series:
+    if not returns_by_ticker:
         return pd.DataFrame()
 
-    # Align all series, forward-fill intraday gaps, drop all-NaN rows
-    df = pd.DataFrame(price_series).ffill().dropna(how="all")
-    if df.empty:
+    # Equal-weight mean of whichever tickers are active each day (skipna=True)
+    # Tickers not yet purchased have NaN returns and are automatically excluded.
+    df_returns = pd.DataFrame(returns_by_ticker)
+    port_daily = df_returns.mean(axis=1)
+
+    # Drop the leading NaN row (first trading day has no prior close for any ticker)
+    port_daily = port_daily.dropna()
+    if port_daily.empty:
         return pd.DataFrame()
 
-    # Rebase each ticker to its first non-NaN value, then equal-weight
-    df_rebased = df.div(df.bfill().iloc[0]) * 100
-    portfolio_line = df_rebased.mean(axis=1)
-
+    portfolio_line = (1 + port_daily).cumprod() * 100
     result = pd.DataFrame({"Portfolio": portfolio_line})
 
-    # Benchmark
+    # Benchmark — fetch from the overall start so the chart spans the same window
     bench_hist = get_price_history_range(benchmark, start=start)
     if not bench_hist.empty:
         bench = bench_hist["Close"].reindex(result.index, method="ffill")
