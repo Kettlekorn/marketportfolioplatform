@@ -1,11 +1,6 @@
-"""Reusable UI components: metric_card(), score_badge(), section_header()."""
+"""Reusable UI components: score_badge(), section_header()."""
 
 import streamlit as st
-
-
-def metric_card(label: str, value: str, delta: str | None = None) -> None:
-    """Render a single KPI tile using st.metric."""
-    st.metric(label=label, value=value, delta=delta)
 
 
 def score_badge(signal: str, composite: float, n_factors: int) -> None:

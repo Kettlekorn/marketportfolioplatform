@@ -1,16 +1,18 @@
 """Analysis tab: full 8-section analysis card for any ticker."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
+import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 from analytics.meridian import compute_meridian_score
+from analytics.regime import compute_regimes
 from analytics.risk import compute_risk_metrics
-from components.cards import metric_card, score_badge, section_header
+from components.cards import score_badge, section_header
 from components.charts import factor_bar_chart, plotly_price_chart
 from data.insider_data import get_insider_summary
 from data.market_data import (
-    get_company_name,
     get_current_price,
     get_fundamentals,
     get_news,
@@ -200,7 +202,6 @@ def _render_insider(ticker: str) -> None:
 
     txns = summary.get("transactions", [])
     if txns:
-        import pandas as pd
         df = pd.DataFrame(txns)
         # Clean up display
         rename = {}
@@ -218,6 +219,170 @@ def _render_insider(ticker: str) -> None:
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
         st.info("No insider transactions found in the last 90 days.")
+
+
+# ---------------------------------------------------------------------------
+# Regime section
+# ---------------------------------------------------------------------------
+
+_ACCENT = "#00BFFF"
+
+
+def _hex_rgba(hex_color: str, alpha: float) -> str:
+    r, g, b = int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:7], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
+def _render_regime(ticker: str) -> None:
+    section_header("Market Regime (HMM)")
+
+    today = datetime.today()
+    default_end = today.strftime("%Y-%m-%d")
+    default_start = (today - timedelta(days=3 * 365)).strftime("%Y-%m-%d")
+
+    with st.expander("Regime Controls", expanded=False):
+        col_s, col_e = st.columns(2)
+        with col_s:
+            start_date = st.date_input(
+                "Start date",
+                value=datetime.strptime(default_start, "%Y-%m-%d"),
+                key=f"reg_start_{ticker}",
+            )
+        with col_e:
+            end_date = st.date_input(
+                "End date",
+                value=datetime.strptime(default_end, "%Y-%m-%d"),
+                key=f"reg_end_{ticker}",
+            )
+
+        use_auto = st.toggle("Auto BIC selection", value=True, key=f"reg_auto_{ticker}")
+        n_slider = st.slider(
+            "Number of regimes",
+            min_value=3, max_value=7, value=3,
+            key=f"reg_n_{ticker}",
+            disabled=use_auto,
+        )
+        run_btn = st.button("Run Regime Analysis", key=f"reg_run_{ticker}", type="primary")
+
+    n_override = None if use_auto else int(n_slider)
+
+    if run_btn:
+        with st.spinner("Fitting GARCH + HMM… this may take 20–40 seconds."):
+            result = compute_regimes(ticker, str(start_date), str(end_date), n_override)
+        st.session_state[f"regime_data_{ticker}"] = result
+        st.session_state[f"regime_ran_{ticker}"] = True
+
+    if not st.session_state.get(f"regime_ran_{ticker}"):
+        st.info("Expand controls above and click **Run Regime Analysis** to detect market regimes.")
+        return
+
+    data = st.session_state.get(f"regime_data_{ticker}")
+    if data is None:
+        st.error("Regime analysis failed — not enough data or model did not converge.")
+        return
+
+    dates = data["dates"]
+    closes = data["closes"]
+    reg_labels = data["reg_labels"]
+    confidence = data["confidence"]
+    stats = data["stats"]
+    color_map = data["color_map"]
+    cur_label = data["cur_label"]
+    cur_conf = data["cur_conf"]
+    stability = data["stability"]
+    n_regimes = data["n_regimes"]
+
+    # ── Current regime summary row ──────────────────────────────────────────
+    badge_col = color_map.get(cur_label, _ACCENT)
+    text_col = "#000" if badge_col in (_ACCENT, "#FFD700") else "#fff"
+    c1, c2, c3, c4 = st.columns(4)
+    c1.markdown(
+        f"<div style='font-size:0.8em;color:#888'>Current Regime</div>"
+        f"<div style='padding:4px 10px;background:{badge_col};color:{text_col};"
+        f"border-radius:4px;font-weight:bold;display:inline-block'>{cur_label}</div>",
+        unsafe_allow_html=True,
+    )
+    c2.metric("Confidence", f"{cur_conf:.1f}%")
+    c3.metric("Stability", stability)
+    c4.metric("Regimes Found", n_regimes)
+
+    # ── Price chart with regime bands ───────────────────────────────────────
+    fig = go.Figure()
+
+    i = 0
+    while i < len(reg_labels):
+        lbl = reg_labels[i]
+        j = i + 1
+        while j < len(reg_labels) and reg_labels[j] == lbl:
+            j += 1
+        fig.add_vrect(
+            x0=dates[i],
+            x1=dates[min(j, len(dates) - 1)],
+            fillcolor=_hex_rgba(color_map.get(lbl, "#ffffff"), 0.13),
+            layer="below",
+            line_width=0,
+        )
+        i = j
+
+    fig.add_trace(go.Scatter(
+        x=dates, y=closes,
+        mode="lines",
+        line=dict(color="white", width=1.5),
+        name="Price",
+        hovertemplate="%{x}<br>$%{y:.2f}<extra></extra>",
+    ))
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#0e1117",
+        plot_bgcolor="#0e1117",
+        height=400,
+        showlegend=False,
+        xaxis=dict(showgrid=False, zeroline=False),
+        yaxis=dict(showgrid=True, gridcolor="#1e1e2e", zeroline=False, title="Price ($)"),
+        margin=dict(l=60, r=20, t=10, b=40),
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # ── Per-regime stats cards ──────────────────────────────────────────────
+    cols = st.columns(max(1, min(len(stats), 5)))
+    for col, (lbl, s) in zip(cols, stats.items()):
+        with col:
+            st.markdown(
+                f"<div style='border-left:4px solid {s['color']};padding:8px 12px;"
+                f"background:#0d0d1a;border-radius:4px;margin-bottom:4px'>"
+                f"<span style='color:{s['color']};font-weight:bold'>{lbl}</span><br>"
+                f"<small>Return: {s['mean_return']:+.3f}%<br>"
+                f"Vol: {s['mean_vol']:.3f}%<br>"
+                f"Vol Ratio: {s['mean_vol_ratio']:.2f}×<br>"
+                f"Time: {s['pct_time']:.1f}%</small></div>",
+                unsafe_allow_html=True,
+            )
+
+    # ── Confidence timeline ─────────────────────────────────────────────────
+    conf_fig = go.Figure()
+    conf_fig.add_trace(go.Scatter(
+        x=dates,
+        y=[c * 100 for c in confidence],
+        mode="lines",
+        fill="tozeroy",
+        fillcolor=_hex_rgba(_ACCENT, 0.25),
+        line=dict(color=_ACCENT, width=1.2),
+        name="Confidence %",
+        hovertemplate="%{x}<br>%{y:.1f}%<extra></extra>",
+    ))
+    conf_fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#0e1117",
+        plot_bgcolor="#0e1117",
+        height=160,
+        showlegend=False,
+        xaxis=dict(showgrid=False, zeroline=False),
+        yaxis=dict(showgrid=True, gridcolor="#1e1e2e", zeroline=False,
+                   title="Conf %", range=[0, 105]),
+        margin=dict(l=60, r=20, t=6, b=40),
+    )
+    st.plotly_chart(conf_fig, use_container_width=True)
 
 
 # ---------------------------------------------------------------------------
@@ -261,14 +426,17 @@ def render_analysis_tab():
     # 4 — Price chart with period toggle
     _render_price_chart(ticker)
 
-    # 5 — Fundamentals table
+    # 5 — Market regime detection
+    _render_regime(ticker)
+
+    # 6 — Fundamentals table
     _render_fundamentals(ticker)
 
-    # 6 — Recent news
+    # 7 — Recent news
     _render_news(ticker)
 
-    # 7 — Analyst ratings
+    # 8 — Analyst ratings
     _render_recommendations(ticker)
 
-    # 8 — Insider activity
+    # 9 — Insider activity
     _render_insider(ticker)

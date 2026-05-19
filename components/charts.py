@@ -103,7 +103,7 @@ def factor_bar_chart(factors: dict) -> go.Figure:
             y=labels,
             orientation="h",
             marker_color=colors,
-            text=[f"{z:+.2f}" if z != 0 else "—" for z in zscores],
+            text=[f"{z:+.2f}" if f["available"] else "—" for z, f in zip(zscores, factors.values())],
             textposition="outside",
         )
     )

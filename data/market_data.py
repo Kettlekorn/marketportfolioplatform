@@ -36,7 +36,7 @@ def get_current_price(ticker: str) -> tuple[float | None, float | None]:
         info = get_ticker_info(ticker)
         price = info.get("currentPrice") or info.get("regularMarketPrice")
         prev = info.get("previousClose") or info.get("regularMarketPreviousClose")
-        pct = (price - prev) / prev * 100 if price and prev else None
+        pct = (price - prev) / prev * 100 if price is not None and prev is not None and prev != 0 else None
         return price, pct
     except Exception:
         return None, None

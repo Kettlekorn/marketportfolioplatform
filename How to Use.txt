@@ -1,0 +1,79 @@
+===============================================================
+  STOCK RESEARCH PLATFORM — SETUP GUIDE (complete beginner)
+===============================================================
+
+Follow these steps in order. Do each one before moving to the next.
+
+
+---------------------------------------------------------------
+STEP 1 — Install Python
+---------------------------------------------------------------
+
+1. Go to https://www.python.org/downloads/
+2. Download Python
+3. Run the installer.
+   On the first screen, check the box that says
+   "Add Python to PATH" before clicking Install Now.
+4. Click "Install Now" and let it finish.
+
+To verify it worked, open a terminal (see Step 2) and type:
+   python --version
+
+
+---------------------------------------------------------------
+STEP 2 — Open a Terminal
+---------------------------------------------------------------
+
+Press the Windows key, type "PowerShell", and press Enter.
+
+---------------------------------------------------------------
+STEP 3 — Navigate to the Stock Platform Folder
+---------------------------------------------------------------
+
+In the terminal, type the following command and press Enter.
+Replace YOUR_USERNAME with your actual Windows username
+(e.g. if your user folder is C:\Users\Brandon, use Brandon):
+
+   cd C:\Users\YOUR_USERNAME\stock_platform
+
+If you're not sure where the folder is, right-click it in
+File Explorer, choose "Properties", and look at "Location".
+
+
+---------------------------------------------------------------
+STEP 4 — Install the Required Libraries
+---------------------------------------------------------------
+
+Copy and paste this entire command into the terminal,
+then press Enter. It will download everything the app needs.
+This may take 2–5 minutes depending on your internet speed.
+
+   pip install streamlit yfinance pandas numpy plotly sqlalchemy requests scipy hmmlearn arch scikit-learn
+
+Wait until you see the terminal prompt (a blinking cursor with
+a ">") reappear before moving on.
+
+
+---------------------------------------------------------------
+STEP 5 — Run the App
+---------------------------------------------------------------
+
+Make sure you're still in the stock_platform folder (Step 3),
+then run:
+
+   python -m streamlit run app.py
+
+Your browser will open automatically to the app.
+If it doesn't, look for a line in the terminal that says:
+   Local URL: http://localhost:8501
+Copy that address and paste it into your browser.
+
+
+---------------------------------------------------------------
+STEP 6 — Stopping the App
+---------------------------------------------------------------
+
+Go back to the terminal window and press Ctrl + C.
+This stops the app. You can close the browser tab after.
+
+
