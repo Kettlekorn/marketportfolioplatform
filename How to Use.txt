@@ -32,7 +32,6 @@ STEP 3 — Navigate to the Stock Platform Folder
 
 In the terminal, type the following command and press Enter.
 Replace YOUR_USERNAME with your actual Windows username
-(e.g. if your user folder is C:\Users\Brandon, use Brandon):
 
    cd C:\Users\YOUR_USERNAME\stock_platform
 

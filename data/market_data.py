@@ -85,7 +85,7 @@ def get_fundamentals(ticker: str) -> dict:
         "eps": info.get("trailingEps"),
         "revenue_growth": info.get("revenueGrowth"),
         "profit_margin": info.get("profitMargins"),
-        "debt_to_equity": info.get("debtToEquity"),
+        "debt_to_equity": info.get("debtToEquity") / 100 if info.get("debtToEquity") is not None else None,
     }
 
 
