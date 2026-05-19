@@ -44,7 +44,7 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df.dropna(subset=["log_return"], inplace=True)
 
     scaled = df["log_return"] * 100
-    res = arch_model(scaled, vol="Garch", p=1, q=1, dist="normal").fit(disp="off")
+    res = arch_model(scaled, vol="Garch", p=1, o=1, q=1, dist="normal").fit(disp="off")
     df["realized_vol"] = res.conditional_volatility / 100
 
     df["volume_ratio"] = df["Volume"] / df["Volume"].rolling(20).mean()
