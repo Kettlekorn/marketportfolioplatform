@@ -176,7 +176,7 @@ def render_watchlist_tab():
 
         # ── Inline portfolio inputs (revealed when checkbox is checked) ─────
         if checked:
-            default_price = float(row["price"]) if row["price"] else 0.01
+            default_price = float(row["price"]) if row["price"] is not None else 0.01
 
             with st.container():
                 ic = st.columns([0.35, 1.5, 2.0, 2.0, 2.5, 0.5])

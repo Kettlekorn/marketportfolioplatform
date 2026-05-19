@@ -178,8 +178,9 @@ def compute_meridian_score(ticker: str) -> dict:
         signal = "NEUTRAL"
 
     return {
-        "factors": factors,
+        "factors":  factors,
         "composite": composite,
-        "signal": signal,
+        "signal":   signal,
         "n_factors": len(available_z),
+        "n_total":   len(FACTOR_FUNCS),
     }

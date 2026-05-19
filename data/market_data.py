@@ -3,9 +3,16 @@
 All market data calls must go through this module — no yfinance imports elsewhere.
 """
 
+import time
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
+
 import pandas as pd
+import requests
 import yfinance as yf
 import streamlit as st
+
+_EDGAR_HEADERS = {"User-Agent": "StockResearchPlatform brandonjackwu9@gmail.com"}
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +82,29 @@ def get_price_history_range(
 # Fundamentals
 # ---------------------------------------------------------------------------
 
+@st.cache_data(ttl=3600)
+def _get_annual_revenue_growth(ticker: str) -> float | None:
+    """Calculate YoY revenue growth from the two most recent annual income statements."""
+    try:
+        fin = yf.Ticker(ticker).financials  # columns = fiscal year dates, rows = line items
+        if fin is None or fin.empty:
+            return None
+        rev_row = None
+        for label in ("Total Revenue", "Revenue"):
+            if label in fin.index:
+                rev_row = fin.loc[label]
+                break
+        if rev_row is None or len(rev_row) < 2:
+            return None
+        rev_row = rev_row.sort_index(ascending=False)
+        recent, prior = float(rev_row.iloc[0]), float(rev_row.iloc[1])
+        if prior == 0:
+            return None
+        return (recent - prior) / abs(prior)
+    except Exception:
+        return None
+
+
 @st.cache_data(ttl=600)
 def get_fundamentals(ticker: str) -> dict:
     """Return key fundamental metrics. Any missing field is None."""
@@ -83,7 +113,7 @@ def get_fundamentals(ticker: str) -> dict:
         "pe_ratio": info.get("trailingPE"),
         "forward_pe": info.get("forwardPE"),
         "eps": info.get("trailingEps"),
-        "revenue_growth": info.get("revenueGrowth"),
+        "revenue_growth": _get_annual_revenue_growth(ticker),
         "profit_margin": info.get("profitMargins"),
         "debt_to_equity": info.get("debtToEquity") / 100 if info.get("debtToEquity") is not None else None,
     }
@@ -160,20 +190,127 @@ def get_recommendations(ticker: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Insider transactions (raw)
+# Insider transactions — SEC EDGAR Form 4
 # ---------------------------------------------------------------------------
 
-@st.cache_data(ttl=600)
-def get_insider_transactions_raw(ticker: str) -> pd.DataFrame:
-    """Return raw insider_transactions DataFrame from yfinance.
+_FORM4_CODES = {
+    "P": "Purchase",
+    "S": "Sale",
+    "A": "Award/Grant",
+    "M": "Option Exercise",
+    "F": "Tax Withholding",
+    "D": "Disposition",
+    "G": "Gift",
+}
 
-    Returns empty DataFrame on any failure. Processing lives in insider_data.py.
-    """
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _edgar_cik(ticker: str) -> str | None:
+    """Return zero-padded 10-digit CIK for a ticker, or None if not found."""
     try:
-        df = yf.Ticker(ticker).insider_transactions
-        return df if df is not None and not df.empty else pd.DataFrame()
+        resp = requests.get(
+            "https://www.sec.gov/files/company_tickers.json",
+            headers=_EDGAR_HEADERS, timeout=10,
+        )
+        resp.raise_for_status()
+        for entry in resp.json().values():
+            if entry.get("ticker", "").upper() == ticker.upper():
+                return str(entry["cik_str"]).zfill(10)
+    except Exception:
+        pass
+    return None
+
+
+def _xml_text(el, path: str) -> str | None:
+    node = el.find(path)
+    return node.text.strip() if node is not None and node.text else None
+
+
+def _xml_float(el, path: str) -> float | None:
+    node = el.find(path)
+    if node is not None and node.text:
+        try:
+            return float(node.text.strip())
+        except ValueError:
+            pass
+    return None
+
+
+def _parse_form4_xml(xml_bytes: bytes, filing_date: str) -> list[dict]:
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        return []
+
+    owner  = _xml_text(root, ".//rptOwnerName") or "Unknown"
+    title  = (_xml_text(root, ".//officerTitle")
+              or ("Director" if _xml_text(root, ".//isDirector") == "1" else "Other"))
+
+    rows = []
+    for txn in root.findall(".//nonDerivativeTransaction"):
+        code   = _xml_text(txn, ".//transactionCode") or "J"
+        shares = _xml_float(txn, ".//transactionShares/value")
+        price  = _xml_float(txn, ".//transactionPricePerShare/value")
+        date   = _xml_text(txn, ".//transactionDate/value") or filing_date
+        if shares is None:
+            continue
+        rows.append({
+            "Date":        date,
+            "Insider":     owner,
+            "Position":    title,
+            "Transaction": _FORM4_CODES.get(code, f"Other ({code})"),
+            "Code":        code,
+            "Shares":      abs(shares),
+            "Value":       round(abs(shares) * price, 2) if price else None,
+        })
+    return rows
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_insider_transactions_raw(ticker: str) -> pd.DataFrame:
+    """Fetch Form 4 insider transactions directly from SEC EDGAR."""
+    cik = _edgar_cik(ticker)
+    if not cik:
+        return pd.DataFrame()
+
+    try:
+        resp = requests.get(
+            f"https://data.sec.gov/submissions/CIK{cik}.json",
+            headers=_EDGAR_HEADERS, timeout=10,
+        )
+        resp.raise_for_status()
+        recent = resp.json().get("filings", {}).get("recent", {})
     except Exception:
         return pd.DataFrame()
+
+    forms    = recent.get("form", [])
+    dates    = recent.get("filingDate", [])
+    accs     = recent.get("accessionNumber", [])
+    docs     = recent.get("primaryDocument", [])
+    cutoff   = (datetime.now() - timedelta(days=400)).strftime("%Y-%m-%d")
+    cik_int  = int(cik)
+
+    all_rows, count = [], 0
+    for form, date, acc, doc in zip(forms, dates, accs, docs):
+        if form != "4" or date < cutoff:
+            continue
+        if count >= 60:
+            break
+        acc_nodash = acc.replace("-", "")
+        # primaryDocument may have an xsl viewer prefix (e.g. xslF345X06/ownership.xml)
+        # — strip it to get the raw XML path
+        raw_doc = doc.split("/")[-1] if "/" in doc else doc
+        url = f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{acc_nodash}/{raw_doc}"
+        try:
+            xml_resp = requests.get(url, headers=_EDGAR_HEADERS, timeout=10)
+            xml_resp.raise_for_status()
+            all_rows.extend(_parse_form4_xml(xml_resp.content, date))
+            time.sleep(0.05)
+        except Exception:
+            continue
+        count += 1
+
+    return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
 
 
 # ---------------------------------------------------------------------------
@@ -203,9 +340,8 @@ def get_roe(ticker: str) -> float | None:
 
 @st.cache_data(ttl=600)
 def get_revenue_growth(ticker: str) -> float | None:
-    """Return revenueGrowth YoY. None if unavailable."""
-    info = get_ticker_info(ticker)
-    return info.get("revenueGrowth")
+    """Return annual YoY revenue growth from income statements. None if unavailable."""
+    return _get_annual_revenue_growth(ticker)
 
 
 @st.cache_data(ttl=600)

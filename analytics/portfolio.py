@@ -46,9 +46,9 @@ def compute_positions(portfolio_rows: list[dict]) -> list[dict]:
 
     enriched = []
     for ticker, lots in lots_by_ticker.items():
-        total_shares = sum(lot.get("shares", 1.0) for lot in lots)
+        total_shares = sum(lot["shares"] for lot in lots)
         avg_cost = (
-            sum(lot["price_bought"] * lot.get("shares", 1.0) for lot in lots) / total_shares
+            sum(lot["price_bought"] * lot["shares"] for lot in lots) / total_shares
             if total_shares else 0.0
         )
 
@@ -255,8 +255,12 @@ def individual_rolling_volatilities(
     start = earliest.strftime("%Y-%m-%d")
 
     series: dict[str, pd.Series] = {}
+    seen: set[str] = set()
     for row in portfolio_rows:
         ticker = row["ticker"]
+        if ticker in seen:
+            continue
+        seen.add(ticker)
         hist = get_price_history_range(ticker, start=start)
         if not hist.empty:
             series[ticker] = (

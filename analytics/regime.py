@@ -12,6 +12,7 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 from hmmlearn import hmm
+from scipy.stats import multivariate_normal
 from sklearn.preprocessing import StandardScaler
 from arch import arch_model
 
@@ -104,7 +105,10 @@ def _forward_filter(model: hmm.GaussianHMM, X: np.ndarray) -> np.ndarray:
     """Return normalised state probabilities shape (T, K) using only past observations."""
     T = len(X)
     K = model.n_components
-    log_emit = model._compute_log_likelihood(X)
+    log_emit = np.column_stack([
+        multivariate_normal.logpdf(X, mean=model.means_[k], cov=np.diag(model.covars_[k]))
+        for k in range(model.n_components)
+    ])
     log_trans = np.log(model.transmat_ + 1e-300)
     log_init = np.log(model.startprob_ + 1e-300)
 
@@ -136,9 +140,10 @@ def _stability_filter(
         confirmed[i] = raw[i] if run >= persist else confirmed[i - 1]
 
     uncertain = [False] * n
-    for i in range(window, n):
-        seg = confirmed[i - window:i]
-        transitions = sum(seg[j] != seg[j - 1] for j in range(1, window))
+    for i in range(1, n):
+        look = min(i, window)
+        seg = confirmed[i - look:i]
+        transitions = sum(seg[j] != seg[j - 1] for j in range(1, look))
         uncertain[i] = transitions > threshold
 
     return confirmed, uncertain

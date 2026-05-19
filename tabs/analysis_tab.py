@@ -78,14 +78,24 @@ def _render_meridian(ticker: str) -> None:
     with st.spinner("Computing Meridian score…"):
         ms = compute_meridian_score(ticker)
 
-    score_badge(ms["signal"], ms["composite"], ms["n_factors"])
+    score_badge(ms["signal"], ms["composite"], ms["n_factors"], ms["n_total"])
     st.plotly_chart(factor_bar_chart(ms["factors"]), use_container_width=True)
 
 
+_RISK_PERIOD_MAP = {"1M": "1mo", "1Y": "1y", "Max": "max"}
+
+
 def _render_risk(ticker: str) -> None:
-    section_header("Risk Metrics (1Y)")
+    section_header("Risk Metrics")
+    period_label = st.radio(
+        "Risk period", list(_RISK_PERIOD_MAP.keys()),
+        index=1, horizontal=True,
+        key=f"risk_period_{ticker}",
+        label_visibility="collapsed",
+    )
+    period = _RISK_PERIOD_MAP[period_label]
     with st.spinner("Computing risk metrics…"):
-        rm = compute_risk_metrics(ticker)
+        rm = compute_risk_metrics(ticker, period=period)
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Volatility (Ann.)", _pct(rm.get("volatility")))
@@ -188,13 +198,23 @@ def _render_recommendations(ticker: str) -> None:
     c6.metric("Mean Target", _fmt_price(target))
 
 
+_INSIDER_PERIOD_MAP = {"30D": 30, "1Y": 365, "13M (Max)": None}
+
+
 def _render_insider(ticker: str) -> None:
-    section_header("Insider Activity (Last 90 Days)")
-    summary = get_insider_summary(ticker, days=90)
+    section_header("Insider Activity")
+    period_label = st.radio(
+        "Insider period", list(_INSIDER_PERIOD_MAP.keys()),
+        index=0, horizontal=True,
+        key=f"insider_period_{ticker}",
+        label_visibility="collapsed",
+    )
+    days = _INSIDER_PERIOD_MAP[period_label]
+    summary = get_insider_summary(ticker, days=days)
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Buys", summary["buys"] or "—")
-    c2.metric("Sells", summary["sells"] or "—")
+    c1.metric("Buys", summary["buys"])
+    c2.metric("Sells", summary["sells"])
     c3.metric("Net Shares",
               f"{summary['net_shares']:+,.0f}" if summary["net_shares"] != 0 else "—")
     c4.metric("Net Ratio",
@@ -203,7 +223,6 @@ def _render_insider(ticker: str) -> None:
     txns = summary.get("transactions", [])
     if txns:
         df = pd.DataFrame(txns)
-        # Clean up display
         rename = {}
         for col in df.columns:
             if "date" in col.lower():
@@ -214,11 +233,11 @@ def _render_insider(ticker: str) -> None:
                     pass
         if rename:
             df = df.rename(columns=rename)
-        # Drop URL column if present
         df = df.drop(columns=[c for c in ("URL", "url") if c in df.columns], errors="ignore")
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
-        st.info("No insider transactions found in the last 90 days.")
+        no_data_msg = f"No insider transactions found in the last {period_label}."
+        st.info(no_data_msg)
 
 
 # ---------------------------------------------------------------------------

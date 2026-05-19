@@ -3,7 +3,7 @@
 import streamlit as st
 
 
-def score_badge(signal: str, composite: float, n_factors: int) -> None:
+def score_badge(signal: str, composite: float, n_factors: int, n_total: int = 8) -> None:
     """Render a large Meridian signal badge with composite score."""
     colors = {"LONG": "#00C853", "SHORT": "#FF1744", "NEUTRAL": "#FFD600"}
     bg = colors.get(signal, "#888")
@@ -20,7 +20,7 @@ def score_badge(signal: str, composite: float, n_factors: int) -> None:
             letter-spacing:0.08em;
         ">{signal}</div>
         <span style="color:#aaa; font-size:0.85rem; margin-left:0.7rem;">
-            composite&nbsp;{composite:+.2f} &nbsp;·&nbsp; {n_factors}/8 factors
+            composite&nbsp;{composite:+.2f} &nbsp;·&nbsp; {n_factors}/{n_total} factors
         </span>
         """,
         unsafe_allow_html=True,
