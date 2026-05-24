@@ -13,6 +13,17 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+st.markdown(
+    """
+    <style>
+    .stTabs [data-baseweb="tab-list"] {
+        justify-content: center;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 tab_watchlist, tab_analysis, tab_portfolio = st.tabs(
     ["📋 Watchlist", "🔍 Analysis", "💼 Portfolio"]
 )
