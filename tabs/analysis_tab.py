@@ -63,8 +63,12 @@ def _render_header(ticker: str) -> None:
 
     col_title, col_badge = st.columns([3, 2])
     with col_title:
-        st.markdown(f"## {ticker} &nbsp; <span style='font-size:1rem;color:#aaa'>{name}</span>",
-                    unsafe_allow_html=True)
+        yf_url = f"https://finance.yahoo.com/quote/{ticker}"
+        st.markdown(
+            f"## <a href='{yf_url}' target='_blank' style='color:inherit;text-decoration:none;'>{ticker}</a>"
+            f" &nbsp; <span style='font-size:1rem;color:#aaa'>{name}</span>",
+            unsafe_allow_html=True,
+        )
         price_str = _fmt_price(price)
         delta_str = _delta_str(chg)
         color = "green" if (chg or 0) >= 0 else "red"
@@ -122,7 +126,7 @@ def _render_price_chart(ticker: str) -> None:
 
 
 def _render_fundamentals(ticker: str) -> None:
-    section_header("Fundamentals")
+    section_header("Fundamentals", f"https://finance.yahoo.com/quote/{ticker}/financials")
     fund = get_fundamentals(ticker)
 
     cols = st.columns(6)
@@ -174,7 +178,7 @@ def _render_news(ticker: str) -> None:
 
 
 def _render_recommendations(ticker: str) -> None:
-    section_header("Analyst Ratings")
+    section_header("Analyst Ratings", f"https://finance.yahoo.com/quote/{ticker}/analysis")
     rec = get_recommendations(ticker)
     if not rec:
         st.info("No analyst ratings available.")
@@ -202,7 +206,7 @@ _INSIDER_PERIOD_MAP = {"30D": 30, "1Y": 365, "13M (Max)": None}
 
 
 def _render_insider(ticker: str) -> None:
-    section_header("Insider Activity")
+    section_header("Insider Activity", f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={ticker}&type=4")
     period_label = st.radio(
         "Insider period", list(_INSIDER_PERIOD_MAP.keys()),
         index=0, horizontal=True,

@@ -27,12 +27,18 @@ def score_badge(signal: str, composite: float, n_factors: int, n_total: int = 8)
     )
 
 
-def section_header(title: str) -> None:
-    """Render a subtle section divider with a title."""
+def section_header(title: str, source_url: str | None = None) -> None:
+    """Render a subtle section divider with a title and optional source link icon."""
+    link_html = (
+        f"<a href='{source_url}' target='_blank' style='"
+        f"color:#7C5CFF; font-size:0.7em; opacity:0.45; margin-left:5px; "
+        f"vertical-align:super; text-decoration:none;' title='View source'>&#x2197;</a>"
+        if source_url else ""
+    )
     st.markdown(
         f"<p style='color:#7C5CFF; font-weight:600; margin-bottom:0.2rem; "
         f"font-size:0.9rem; text-transform:uppercase; letter-spacing:0.07em;'>"
-        f"{title}</p>",
+        f"{title}{link_html}</p>",
         unsafe_allow_html=True,
     )
     st.divider()

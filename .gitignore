@@ -2,6 +2,9 @@
 __pycache__/
 *.py[cod]
 
+# Virtual environment
+.venv/
+
 # Database (personal data — don't share publicly)
 data/app.db
 
