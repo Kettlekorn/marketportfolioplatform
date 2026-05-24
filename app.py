@@ -19,6 +19,8 @@ st.markdown(
     .stTabs [data-baseweb="tab-list"] {
         justify-content: center;
     }
+    footer {visibility: hidden;}
+    #MainMenu {visibility: hidden;}
     </style>
     """,
     unsafe_allow_html=True,
