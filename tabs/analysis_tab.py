@@ -13,6 +13,7 @@ from components.cards import score_badge, section_header
 from components.charts import factor_bar_chart, plotly_price_chart
 from data.insider_data import get_insider_summary
 from data.market_data import (
+    get_analyst_targets,
     get_current_price,
     get_fundamentals,
     get_news,
@@ -44,6 +45,20 @@ def _pct(val) -> str:
 
 def _fmt_price(val) -> str:
     return f"${val:,.2f}" if val is not None else "—"
+
+
+def _metric_card(label: str, value: str, source_url: str = None) -> str:
+    icon = (
+        f"<a href='{source_url}' target='_blank' "
+        f"style='font-size:0.65em;color:#666;text-decoration:none;"
+        f"vertical-align:super;margin-left:3px' title='via Finviz'>↗</a>"
+    ) if source_url else ""
+    return (
+        f"<div style='padding:4px 0 8px'>"
+        f"<p style='margin:0 0 4px;font-size:0.875rem;color:#aaa;font-weight:400'>{label}{icon}</p>"
+        f"<p style='margin:0;font-size:1.75rem;font-weight:700;color:#fafafa;line-height:1.1'>{value}</p>"
+        f"</div>"
+    )
 
 
 def _delta_str(chg: float | None) -> str | None:
@@ -128,19 +143,39 @@ def _render_price_chart(ticker: str) -> None:
 def _render_fundamentals(ticker: str) -> None:
     section_header("Fundamentals", f"https://finance.yahoo.com/quote/{ticker}/financials")
     fund = get_fundamentals(ticker)
+    sources = fund.get("_sources", {})
+    estimates = fund.get("_estimates", {})
+    price, _ = get_current_price(ticker)
+
+    def _fv_url(field: str) -> str | None:
+        return f"https://finviz.com/quote.ashx?t={ticker}" if sources.get(field) == "finviz" else None
 
     cols = st.columns(6)
-    labels = ["P/E (TTM)", "Forward P/E", "EPS (TTM)", "Rev. Growth", "Profit Margin", "Debt/Equity"]
-    values = [
-        _v(fund.get("pe_ratio"), ".1f"),
-        _v(fund.get("forward_pe"), ".1f"),
-        _v(fund.get("eps"), ".2f", ""),
-        _pct(fund.get("revenue_growth")),
-        _pct(fund.get("profit_margin")),
-        _v(fund.get("debt_to_equity"), ".1f"),
-    ]
-    for col, lbl, val in zip(cols, labels, values):
-        col.metric(lbl, val)
+
+    with cols[0]:
+        st.markdown(_metric_card("P/E (TTM)", _v(fund.get("pe_ratio"), ".1f"), _fv_url("pe_ratio")), unsafe_allow_html=True)
+
+    with cols[1]:
+        st.markdown(_metric_card("Forward P/E", _v(fund.get("forward_pe"), ".1f"), _fv_url("forward_pe")), unsafe_allow_html=True)
+        if estimates:
+            with st.popover("estimates ▾", use_container_width=True):
+                for period in ("0q", "+1q", "0y", "+1y"):
+                    est = estimates.get(period)
+                    if est:
+                        pe = price / est["eps"] if price and est["eps"] and est["eps"] > 0 else None
+                        st.metric(est["label"], _v(pe, ".1f") if pe else "—")
+
+    with cols[2]:
+        st.markdown(_metric_card("EPS (TTM)", _v(fund.get("eps"), ".2f"), _fv_url("eps")), unsafe_allow_html=True)
+
+    with cols[3]:
+        st.markdown(_metric_card("Rev. Growth", _pct(fund.get("revenue_growth"))), unsafe_allow_html=True)
+
+    with cols[4]:
+        st.markdown(_metric_card("Profit Margin", _pct(fund.get("profit_margin")), _fv_url("profit_margin")), unsafe_allow_html=True)
+
+    with cols[5]:
+        st.markdown(_metric_card("Debt/Equity", _v(fund.get("debt_to_equity"), ".1f"), _fv_url("debt_to_equity")), unsafe_allow_html=True)
 
 
 def _render_news(ticker: str) -> None:
@@ -199,7 +234,17 @@ def _render_recommendations(ticker: str) -> None:
     c3.metric("Hold", hold if total else "—")
     c4.metric("Sell", sell if total else "—")
     c5.metric("Strong Sell", strong_sell if total else "—")
-    c6.metric("Mean Target", _fmt_price(target))
+    with c6:
+        st.metric("Mean Target", _fmt_price(target))
+        at = get_analyst_targets(ticker)
+        if at:
+            with st.popover("range ▾", use_container_width=True):
+                price, _ = get_current_price(ticker)
+                if price:
+                    st.metric("Current Price", _fmt_price(price))
+                st.metric("Low Target", _fmt_price(at.get("low")))
+                st.metric("Mean Target", _fmt_price(at.get("mean")))
+                st.metric("High Target", _fmt_price(at.get("high")))
 
 
 _INSIDER_PERIOD_MAP = {"30D": 30, "1Y": 365, "13M (Max)": None}
