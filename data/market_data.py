@@ -11,7 +11,6 @@ import pandas as pd
 import requests
 import yfinance as yf
 import streamlit as st
-from bs4 import BeautifulSoup
 
 _EDGAR_HEADERS = {"User-Agent": "StockResearchPlatform brandonjackwu9@gmail.com"}
 
@@ -106,87 +105,6 @@ def _get_annual_revenue_growth(ticker: str) -> float | None:
         return None
 
 
-@st.cache_data(ttl=600)
-def get_finviz_fundamentals(ticker: str) -> dict:
-    """Scrape key fundamentals from Finviz as fallback when yfinance returns None."""
-    try:
-        r = requests.get(
-            f"https://finviz.com/quote.ashx?t={ticker}",
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=8,
-        )
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-        table = soup.find("table", class_="snapshot-table2")
-        if not table:
-            return {}
-        cells = table.find_all("td")
-        raw = {
-            cells[i].get_text(strip=True): cells[i + 1].get_text(strip=True)
-            for i in range(0, len(cells) - 1, 2)
-        }
-
-        def _num(key: str) -> float | None:
-            v = raw.get(key, "").replace(",", "")
-            try:
-                return float(v) if v and v != "-" else None
-            except ValueError:
-                return None
-
-        def _pct(key: str) -> float | None:
-            v = raw.get(key, "").replace("%", "").replace(",", "")
-            try:
-                return float(v) / 100 if v and v != "-" else None
-            except ValueError:
-                return None
-
-        return {
-            "pe_ratio":       _num("P/E"),
-            "forward_pe":     _num("Forward P/E"),
-            "eps":            _num("EPS (ttm)"),
-            "profit_margin":  _pct("Profit Margin"),
-            "debt_to_equity": _num("Debt/Eq"),
-        }
-    except Exception:
-        return {}
-
-
-@st.cache_data(ttl=600)
-def get_earnings_estimates(ticker: str) -> dict:
-    """Return forward EPS estimates keyed by period: 0q, +1q, 0y, +1y."""
-    try:
-        est = yf.Ticker(ticker).earnings_estimate
-        if est is None or est.empty:
-            return {}
-        period_labels = {
-            "0q": "Current Qtr",
-            "+1q": "Next Qtr",
-            "0y": "This Year",
-            "+1y": "Next Year",
-        }
-        result = {}
-        for period, label in period_labels.items():
-            if period in est.index:
-                avg = est.loc[period].get("avg")
-                if avg is not None and pd.notna(avg):
-                    result[period] = {"label": label, "eps": float(avg)}
-        return result
-    except Exception:
-        return {}
-
-
-@st.cache_data(ttl=600)
-def get_analyst_targets(ticker: str) -> dict:
-    """Return analyst price targets: current, mean, low, high, median."""
-    try:
-        targets = yf.Ticker(ticker).analyst_price_targets
-        if not targets:
-            return {}
-        return {k: float(v) for k, v in targets.items() if v is not None}
-    except Exception:
-        return {}
-
-
 def _stmt_val(df: pd.DataFrame, labels: list[str]) -> float | None:
     """Return the most-recent value for the first matching row label in a financial statement."""
     if df is None or df.empty:
@@ -202,10 +120,7 @@ def _stmt_val(df: pd.DataFrame, labels: list[str]) -> float | None:
 
 @st.cache_data(ttl=600)
 def get_fundamentals(ticker: str) -> dict:
-    """Return key fundamental metrics with finviz fallback. Any missing field is None.
-
-    Also returns _sources (dict of field→source), _estimates, and _targets for UI use.
-    """
+    """Return key fundamental metrics. Any missing field is None."""
     t = yf.Ticker(ticker)
 
     # Income statement
@@ -222,7 +137,6 @@ def get_fundamentals(ticker: str) -> dict:
     # EPS = net income / shares; P/E = price / EPS
     eps = None
     pe_ratio = None
-    price = None
     try:
         shares = t.fast_info.shares
         price = t.fast_info.last_price
@@ -249,39 +163,17 @@ def get_fundamentals(ticker: str) -> dict:
     except Exception:
         pass
 
-    # Forward P/E from earnings estimates; fall back to .info
-    estimates = get_earnings_estimates(ticker)
-    forward_pe = None
-    if estimates and price:
-        for period in ("0y", "+1y"):
-            est = estimates.get(period)
-            if est and est["eps"] and est["eps"] > 0:
-                forward_pe = price / est["eps"]
-                break
-    if forward_pe is None:
-        forward_pe = get_ticker_info(ticker).get("forwardPE")
+    # Forward P/E — analyst estimate, only available via .info
+    forward_pe = get_ticker_info(ticker).get("forwardPE")
 
-    values = {
-        "pe_ratio":       pe_ratio,
-        "forward_pe":     forward_pe,
-        "eps":            eps,
+    return {
+        "pe_ratio": pe_ratio,
+        "forward_pe": forward_pe,
+        "eps": eps,
         "revenue_growth": _get_annual_revenue_growth(ticker),
-        "profit_margin":  profit_margin,
+        "profit_margin": profit_margin,
         "debt_to_equity": debt_to_equity,
     }
-
-    # Finviz fallback for any field still None
-    sources: dict[str, str] = {}
-    fv = get_finviz_fundamentals(ticker)
-    for field in ("pe_ratio", "forward_pe", "eps", "profit_margin", "debt_to_equity"):
-        if values[field] is None and fv.get(field) is not None:
-            values[field] = fv[field]
-            sources[field] = "finviz"
-
-    values["_sources"] = sources
-    values["_estimates"] = estimates
-    values["_targets"] = get_analyst_targets(ticker)
-    return values
 
 
 # ---------------------------------------------------------------------------
