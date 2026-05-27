@@ -105,17 +105,74 @@ def _get_annual_revenue_growth(ticker: str) -> float | None:
         return None
 
 
+def _stmt_val(df: pd.DataFrame, labels: list[str]) -> float | None:
+    """Return the most-recent value for the first matching row label in a financial statement."""
+    if df is None or df.empty:
+        return None
+    df = df.sort_index(axis=1, ascending=False)
+    for label in labels:
+        if label in df.index:
+            val = df.loc[label].iloc[0]
+            if pd.notna(val):
+                return float(val)
+    return None
+
+
 @st.cache_data(ttl=600)
 def get_fundamentals(ticker: str) -> dict:
     """Return key fundamental metrics. Any missing field is None."""
-    info = get_ticker_info(ticker)
+    t = yf.Ticker(ticker)
+
+    # Income statement
+    inc = None
+    try:
+        inc = t.income_stmt
+    except Exception:
+        pass
+
+    net_income = _stmt_val(inc, ["Net Income", "Net Income Common Stockholders"])
+    revenue = _stmt_val(inc, ["Total Revenue", "Revenue", "Operating Revenue"])
+    profit_margin = (net_income / revenue) if net_income is not None and revenue else None
+
+    # EPS = net income / shares; P/E = price / EPS
+    eps = None
+    pe_ratio = None
+    try:
+        shares = t.fast_info.shares
+        price = t.fast_info.last_price
+        if net_income is not None and shares:
+            eps = net_income / shares
+        if eps and price:
+            pe_ratio = price / eps
+    except Exception:
+        pass
+
+    # Debt/Equity from balance sheet
+    debt_to_equity = None
+    try:
+        bs = t.balance_sheet
+        total_debt = _stmt_val(bs, ["Total Debt"])
+        if total_debt is None:
+            ltd = _stmt_val(bs, ["Long Term Debt"]) or 0
+            cd = _stmt_val(bs, ["Current Debt", "Current Portion Of Long Term Debt"]) or 0
+            total_debt = ltd + cd if (ltd or cd) else None
+        equity = _stmt_val(bs, ["Stockholders Equity", "Common Stock Equity",
+                                 "Total Equity Gross Minority Interest"])
+        if total_debt is not None and equity:
+            debt_to_equity = total_debt / equity
+    except Exception:
+        pass
+
+    # Forward P/E — analyst estimate, only available via .info
+    forward_pe = get_ticker_info(ticker).get("forwardPE")
+
     return {
-        "pe_ratio": info.get("trailingPE"),
-        "forward_pe": info.get("forwardPE"),
-        "eps": info.get("trailingEps"),
+        "pe_ratio": pe_ratio,
+        "forward_pe": forward_pe,
+        "eps": eps,
         "revenue_growth": _get_annual_revenue_growth(ticker),
-        "profit_margin": info.get("profitMargins"),
-        "debt_to_equity": info.get("debtToEquity") / 100 if info.get("debtToEquity") is not None else None,
+        "profit_margin": profit_margin,
+        "debt_to_equity": debt_to_equity,
     }
 
 
