@@ -19,11 +19,13 @@ st.markdown(
     .stTabs [data-baseweb="tab-list"] {
         justify-content: center;
     }
-    footer {visibility: hidden;}
-    #MainMenu {visibility: hidden;}
-    [data-testid="stToolbar"] {visibility: hidden;}
-    [data-testid="stDecoration"] {visibility: hidden;}
-    [data-testid="stStatusWidget"] {visibility: hidden;}
+    footer {display: none !important;}
+    #MainMenu {display: none !important;}
+    [data-testid="stToolbar"] {display: none !important;}
+    [data-testid="stDecoration"] {display: none !important;}
+    [data-testid="stStatusWidget"] {display: none !important;}
+    [data-testid="manage-app-button"] {display: none !important;}
+    .stAppDeployButton {display: none !important;}
     </style>
     """,
     unsafe_allow_html=True,

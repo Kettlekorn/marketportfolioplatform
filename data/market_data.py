@@ -40,9 +40,9 @@ def get_company_name(ticker: str) -> str:
 def get_current_price(ticker: str) -> tuple[float | None, float | None]:
     """Return (current_price, day_change_pct). Both None on failure."""
     try:
-        info = get_ticker_info(ticker)
-        price = info.get("currentPrice") or info.get("regularMarketPrice")
-        prev = info.get("previousClose") or info.get("regularMarketPreviousClose")
+        fast = yf.Ticker(ticker).fast_info
+        price = fast.last_price
+        prev = fast.previous_close
         pct = (price - prev) / prev * 100 if price is not None and prev is not None and prev != 0 else None
         return price, pct
     except Exception:
