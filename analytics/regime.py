@@ -211,7 +211,7 @@ def compute_regimes(
         "reg_colors": reg_colors,
         "confidence": confidence,
         "stats": stats,
-        "n_regimes": n,
+        "n_regimes": len(stats),
         "cur_label": reg_labels[-1],
         "cur_conf": confidence[-1] * 100,
         "stability": "Uncertain" if uncertain[-1] else "Stable",
