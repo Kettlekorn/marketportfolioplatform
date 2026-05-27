@@ -180,14 +180,9 @@ def get_fundamentals(ticker: str) -> dict:
 # News
 # ---------------------------------------------------------------------------
 
-@st.cache_data(ttl=600)
-def get_news(ticker: str, n: int = 5) -> list[dict]:
-    """Return up to n recent news items as a list of dicts.
-
-    Each dict: title, publisher, link, published (str or int timestamp).
-    Handles both the legacy flat format and the nested 'content' format
-    introduced in yfinance 0.2.54+.
-    """
+@st.cache_data(ttl=3600)
+def get_news(ticker: str, n: int = 5) -> list[dict] | None:
+    """Return up to n recent news items, or None if the fetch fails (e.g. rate-limited)."""
     try:
         raw = yf.Ticker(ticker).news or []
         results = []
@@ -211,19 +206,16 @@ def get_news(ticker: str, n: int = 5) -> list[dict]:
                 })
         return results
     except Exception:
-        return []
+        return None
 
 
 # ---------------------------------------------------------------------------
 # Analyst recommendations
 # ---------------------------------------------------------------------------
 
-@st.cache_data(ttl=600)
-def get_recommendations(ticker: str) -> dict:
-    """Return analyst ratings summary: strongBuy/buy/hold/sell/strongSell + mean target.
-
-    Returns {} if data is unavailable.
-    """
+@st.cache_data(ttl=3600)
+def get_recommendations(ticker: str) -> dict | None:
+    """Return analyst ratings summary, or None if the fetch fails (e.g. rate-limited)."""
     try:
         t = yf.Ticker(ticker)
         info = get_ticker_info(ticker)
@@ -243,7 +235,7 @@ def get_recommendations(ticker: str) -> dict:
             }
         return {"targetMeanPrice": target}
     except Exception:
-        return {}
+        return None
 
 
 # ---------------------------------------------------------------------------

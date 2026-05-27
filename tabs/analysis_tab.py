@@ -146,6 +146,9 @@ def _render_fundamentals(ticker: str) -> None:
 def _render_news(ticker: str) -> None:
     section_header("Recent News")
     news = get_news(ticker, n=5)
+    if news is None:
+        st.warning("News temporarily unavailable — Yahoo Finance may be rate-limiting. Refresh to retry.")
+        return
     if not news:
         st.info("No recent news available.")
         return
@@ -180,6 +183,9 @@ def _render_news(ticker: str) -> None:
 def _render_recommendations(ticker: str) -> None:
     section_header("Analyst Ratings", f"https://finance.yahoo.com/quote/{ticker}/analysis")
     rec = get_recommendations(ticker)
+    if rec is None:
+        st.warning("Ratings temporarily unavailable — Yahoo Finance may be rate-limiting. Refresh to retry.")
+        return
     if not rec:
         st.info("No analyst ratings available.")
         return
