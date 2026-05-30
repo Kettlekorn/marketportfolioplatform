@@ -374,7 +374,7 @@ def _render_regime(ticker: str) -> None:
     st.plotly_chart(fig, use_container_width=True)
 
     # ── Per-regime stats cards ──────────────────────────────────────────────
-    cols = st.columns(max(1, min(len(stats), 5)))
+    cols = st.columns(max(1, len(stats)))
     for col, (lbl, s) in zip(cols, stats.items()):
         with col:
             st.markdown(
