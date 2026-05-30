@@ -20,6 +20,7 @@ from data.market_data import (
     get_recommendations,
     get_ticker_info,
 )
+from data.sp500 import get_momentum_rankings, get_sp500_bulk_info, get_sp500_meta, build_factor_rankings
 
 _PERIOD_MAP = {"1M": "1mo", "3M": "3mo", "6M": "6mo", "1Y": "1y", "5Y": "5y"}
 
@@ -83,7 +84,87 @@ def _render_meridian(ticker: str) -> None:
         ms = compute_meridian_score(ticker)
 
     score_badge(ms["signal"], ms["composite"], ms["n_factors"], ms["n_total"])
-    st.plotly_chart(factor_bar_chart(ms["factors"]), use_container_width=True)
+
+    event = st.plotly_chart(
+        factor_bar_chart(ms["factors"]),
+        use_container_width=True,
+        on_select="rerun",
+        key=f"factor_chart_{ticker}",
+    )
+
+    clicked = None
+    if event and event.selection and event.selection.points:
+        clicked = event.selection.points[0].get("customdata")
+
+    if clicked:
+        _render_factor_ranking(clicked)
+
+
+_FACTOR_LABELS = {
+    "momentum": "Momentum",
+    "value": "Value (1/Fwd PE)",
+    "quality": "Quality (ROE)",
+    "growth": "Growth (Rev YoY)",
+    "estimate_revisions": "Estimate Revisions",
+    "short_interest": "Short Interest",
+    "insider": "Insider Activity",
+    "institutional": "Institutional Own.",
+}
+
+
+_FACTOR_FMT = {
+    "momentum":          lambda x: f"{x:+.1%}",
+    "value":             lambda x: f"{x:.4f}",
+    "quality":           lambda x: f"{x:+.1%}",
+    "growth":            lambda x: f"{x:+.1%}",
+    "estimate_revisions":lambda x: f"{x:+.1%}",
+    "short_interest":    lambda x: f"{-x:.1%} short",
+    "institutional":     lambda x: f"{x:.1%}",
+}
+
+_FACTOR_COL = {
+    "momentum":           "12-1M Return",
+    "value":              "1/Fwd PE",
+    "quality":            "ROE",
+    "growth":             "Rev Growth",
+    "estimate_revisions": "Target Upside",
+    "short_interest":     "Short %",
+    "institutional":      "Inst. Owned",
+}
+
+
+def _render_factor_ranking(factor_key: str) -> None:
+    label = _FACTOR_LABELS.get(factor_key, factor_key)
+    st.markdown(f"#### S&P 500 — {label} Ranking")
+
+    if factor_key == "insider":
+        st.info("Insider Activity ranking requires SEC EDGAR queries for 500 companies — not available.")
+        return
+
+    if factor_key == "momentum":
+        with st.spinner("Loading momentum data… (cached after first load)"):
+            df = get_momentum_rankings()
+    else:
+        with st.spinner("Loading S&P 500 fundamental data… first load takes ~60-90 s, cached 24 h"):
+            bulk = get_sp500_bulk_info()
+            meta = get_sp500_meta()
+        df = build_factor_rankings(factor_key, bulk, meta)
+
+    if df.empty:
+        st.warning("Could not load S&P 500 data.")
+        return
+
+    sectors = ["All"] + sorted(df["sector"].dropna().unique().tolist())
+    sector = st.selectbox("Filter by sector", sectors, key="sp500_sector_filter")
+
+    filtered = df if sector == "All" else df[df["sector"] == sector]
+    top25 = filtered.head(25).copy()
+    fmt = _FACTOR_FMT.get(factor_key, lambda x: f"{x:.3f}")
+    top25["value"] = top25["value"].map(fmt)
+    top25 = top25[["rank", "ticker", "name", "sector", "value"]]
+    top25.columns = ["Rank", "Ticker", "Company", "Sector", _FACTOR_COL.get(factor_key, "Score")]
+
+    st.dataframe(top25, use_container_width=True, hide_index=True)
 
 
 _RISK_PERIOD_MAP = {"1M": "1mo", "1Y": "1y", "Max": "max"}
