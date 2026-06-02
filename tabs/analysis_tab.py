@@ -377,10 +377,13 @@ def _render_regime(ticker: str) -> None:
     n_override = None if use_auto else int(n_slider)
 
     if run_btn:
-        with st.spinner("Fitting GARCH + HMM… this may take 20–40 seconds."):
-            result = compute_regimes(ticker, str(start_date), str(end_date), n_override)
-        st.session_state[f"regime_data_{ticker}"] = result
-        st.session_state[f"regime_ran_{ticker}"] = True
+        try:
+            with st.spinner("Fitting GARCH + HMM… this may take 20–40 seconds."):
+                result = compute_regimes(ticker, str(start_date), str(end_date), n_override)
+            st.session_state[f"regime_data_{ticker}"] = result
+            st.session_state[f"regime_ran_{ticker}"] = True
+        except ValueError as e:
+            st.error(str(e))
 
     if not st.session_state.get(f"regime_ran_{ticker}"):
         st.info("Expand controls above and click **Run Regime Analysis** to detect market regimes.")
@@ -391,16 +394,22 @@ def _render_regime(ticker: str) -> None:
         st.error("Regime analysis failed — not enough data or model did not converge.")
         return
 
-    dates = data["dates"]
-    closes = data["closes"]
-    reg_labels = data["reg_labels"]
-    confidence = data["confidence"]
-    stats = data["stats"]
-    color_map = data["color_map"]
-    cur_label = data["cur_label"]
-    cur_conf = data["cur_conf"]
-    stability = data["stability"]
-    n_regimes = data["n_regimes"]
+    dates          = data["dates"]
+    opens          = data.get("opens", [])
+    highs          = data.get("highs", [])
+    lows           = data.get("lows", [])
+    closes         = data["closes"]
+    volumes        = data.get("volumes", [])
+    daily_returns  = data.get("daily_returns", [])
+    realized_vols  = data.get("realized_vols", [])
+    reg_labels     = data["reg_labels"]
+    confidence     = data["confidence"]
+    stats          = data["stats"]
+    color_map      = data["color_map"]
+    cur_label      = data["cur_label"]
+    cur_conf       = data["cur_conf"]
+    stability      = data["stability"]
+    n_regimes      = data["n_regimes"]
 
     # ── Current regime summary row ──────────────────────────────────────────
     badge_col = color_map.get(cur_label, _ACCENT)
@@ -419,20 +428,35 @@ def _render_regime(ticker: str) -> None:
     # ── Price chart with regime bands ───────────────────────────────────────
     fig = go.Figure()
 
+    # Extract spans for both vrects and clickable markers
+    spans = []
     i = 0
     while i < len(reg_labels):
         lbl = reg_labels[i]
         j = i + 1
         while j < len(reg_labels) and reg_labels[j] == lbl:
             j += 1
+        end_idx = min(j, len(dates) - 1)
+        spans.append({
+            "label": lbl,
+            "start": dates[i],
+            "end":   dates[end_idx],
+            "mid":   dates[(i + end_idx) // 2],
+            "color": color_map.get(lbl, "#ffffff"),
+        })
         fig.add_vrect(
             x0=dates[i],
-            x1=dates[min(j, len(dates) - 1)],
+            x1=dates[end_idx],
             fillcolor=_hex_rgba(color_map.get(lbl, "#ffffff"), 0.13),
             layer="below",
             line_width=0,
         )
         i = j
+
+    max_close = max(closes) if closes else 1
+    min_close = min(closes) if closes else 0
+    bar_base   = max_close * 1.005   # thin bar sits just above the price line
+    bar_height = max_close * 0.012   # bar thickness
 
     fig.add_trace(go.Scatter(
         x=dates, y=closes,
@@ -441,18 +465,111 @@ def _render_regime(ticker: str) -> None:
         name="Price",
         hovertemplate="%{x}<br>$%{y:.2f}<extra></extra>",
     ))
+
+    # Clickable thin bars — one per regime span — drawn above the price line
+    bar_x, bar_widths, bar_colors, bar_cd = [], [], [], []
+    for s in spans:
+        s_dt = datetime.strptime(s["start"], "%Y-%m-%d")
+        e_dt = datetime.strptime(s["end"],   "%Y-%m-%d")
+        width_ms = max((e_dt - s_dt).total_seconds() * 1000, 86_400_000)
+        bar_x.append(s["mid"])
+        bar_widths.append(width_ms)
+        bar_colors.append(s["color"])
+        bar_cd.append([s["start"], s["end"], s["label"]])
+
+    fig.add_trace(go.Bar(
+        x=bar_x,
+        y=[bar_height] * len(spans),
+        base=[bar_base] * len(spans),
+        width=bar_widths,
+        marker_color=bar_colors,
+        marker_line_width=0,
+        customdata=bar_cd,
+        showlegend=False,
+        name="",
+        opacity=0.9,
+        hovertemplate=(
+            "<b>%{customdata[2]}</b><br>"
+            "%{customdata[0]} → %{customdata[1]}<br>"
+            "<i>Click to select range</i><extra></extra>"
+        ),
+    ))
+
     fig.update_layout(
         template="plotly_dark",
         paper_bgcolor="#0e1117",
         plot_bgcolor="#0e1117",
-        height=400,
+        height=420,
         showlegend=False,
         xaxis=dict(showgrid=False, zeroline=False),
-        yaxis=dict(showgrid=True, gridcolor="#1e1e2e", zeroline=False, title="Price ($)"),
+        yaxis=dict(
+            showgrid=True, gridcolor="#1e1e2e", zeroline=False, title="Price ($)",
+            range=[min_close * 0.97, max_close * 1.022],
+        ),
         margin=dict(l=60, r=20, t=10, b=40),
-        hovermode="x unified",
+        hovermode="closest",
+        barmode="overlay",
     )
-    st.plotly_chart(fig, use_container_width=True)
+
+    event = st.plotly_chart(
+        fig,
+        use_container_width=True,
+        on_select="rerun",
+        key=f"regime_chart_{ticker}",
+    )
+
+    # Clicking a regime bar seeds the date inputs — iterate to find bar customdata
+    if event and event.selection and event.selection.points:
+        for pt in event.selection.points:
+            cd = pt.get("customdata")
+            if cd and len(cd) >= 3:
+                st.session_state[f"exp_start_{ticker}"] = datetime.strptime(cd[0], "%Y-%m-%d").date()
+                st.session_state[f"exp_end_{ticker}"]   = datetime.strptime(cd[1], "%Y-%m-%d").date()
+                break
+
+    # ── Export panel — always visible, date range freely adjustable ──────────
+    st.markdown("**Export Range** — click a regime bar above to pre-fill, or set dates manually")
+    ec1, ec2, ec3 = st.columns([2, 2, 1])
+    with ec1:
+        exp_start = st.date_input(
+            "Start date",
+            value=datetime.strptime(dates[0], "%Y-%m-%d"),
+            key=f"exp_start_{ticker}",
+        )
+    with ec2:
+        exp_end = st.date_input(
+            "End date",
+            value=datetime.strptime(dates[-1], "%Y-%m-%d"),
+            key=f"exp_end_{ticker}",
+        )
+
+    # Build export DataFrame — richer columns, filtered to selected date range
+    base_len = len(dates)
+    exp_df = pd.DataFrame({
+        "date":               dates,
+        "open":               opens  if len(opens)  == base_len else [None] * base_len,
+        "high":               highs  if len(highs)  == base_len else [None] * base_len,
+        "low":                lows   if len(lows)   == base_len else [None] * base_len,
+        "close":              closes,
+        "volume":             volumes       if len(volumes)       == base_len else [None] * base_len,
+        "daily_return_pct":   daily_returns if len(daily_returns) == base_len else [None] * base_len,
+        "realized_vol_pct":   realized_vols if len(realized_vols) == base_len else [None] * base_len,
+        "regime":             reg_labels,
+        "regime_confidence":  [round(c * 100, 1) for c in confidence],
+    })
+    exp_df = exp_df[
+        (exp_df["date"] >= str(exp_start)) & (exp_df["date"] <= str(exp_end))
+    ]
+
+    with ec3:
+        st.download_button(
+            "Export CSV",
+            data=exp_df.to_csv(index=False),
+            file_name=f"{ticker}_regime_{exp_start}_{exp_end}.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key=f"exp_btn_{ticker}",
+        )
 
     # ── Per-regime stats cards ──────────────────────────────────────────────
     cols = st.columns(max(1, len(stats)))

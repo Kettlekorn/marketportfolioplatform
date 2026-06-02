@@ -132,7 +132,7 @@ def get_fundamentals(ticker: str) -> dict:
 
     net_income = _stmt_val(inc, ["Net Income", "Net Income Common Stockholders"])
     revenue = _stmt_val(inc, ["Total Revenue", "Revenue", "Operating Revenue"])
-    profit_margin = (net_income / revenue) if net_income is not None and revenue else None
+    profit_margin = (net_income / revenue) if net_income is not None and revenue is not None and revenue != 0 else None
 
     # EPS = net income / shares; P/E = price / EPS
     eps = None

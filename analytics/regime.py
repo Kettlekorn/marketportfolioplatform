@@ -44,8 +44,13 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df.dropna(subset=["log_return"], inplace=True)
 
     scaled = df["log_return"] * 100
-    res = arch_model(scaled, vol="Garch", p=1, o=1, q=1, dist="normal").fit(disp="off")
-    df["realized_vol"] = res.conditional_volatility / 100
+    try:
+        res = arch_model(scaled, vol="Garch", p=1, o=1, q=1, dist="normal").fit(disp="off")
+        df["realized_vol"] = res.conditional_volatility / 100
+    except Exception as e:
+        raise ValueError(
+            f"GARCH model failed to fit — try a longer date range or a different ticker. Detail: {e}"
+        ) from e
 
     df["volume_ratio"] = df["Volume"] / df["Volume"].rolling(20).mean()
     df["hl_range"] = (df["High"] - df["Low"]) / df["Close"]
@@ -204,16 +209,22 @@ def compute_regimes(
         }
 
     return {
-        "ticker": ticker,
-        "dates": df.index.strftime("%Y-%m-%d").tolist(),
-        "closes": df["Close"].squeeze().tolist(),
-        "reg_labels": reg_labels,
-        "reg_colors": reg_colors,
-        "confidence": confidence,
-        "stats": stats,
-        "n_regimes": len(stats),
-        "cur_label": reg_labels[-1],
-        "cur_conf": confidence[-1] * 100,
-        "stability": "Uncertain" if uncertain[-1] else "Stable",
-        "color_map": color_map,
+        "ticker":      ticker,
+        "dates":       df.index.strftime("%Y-%m-%d").tolist(),
+        "opens":       df["Open"].squeeze().tolist(),
+        "highs":       df["High"].squeeze().tolist(),
+        "lows":        df["Low"].squeeze().tolist(),
+        "closes":      df["Close"].squeeze().tolist(),
+        "volumes":     df["Volume"].squeeze().tolist(),
+        "daily_returns": (df["Close"].pct_change() * 100).fillna(0).round(4).tolist(),
+        "realized_vols": [round(v * 100, 4) for v in real_vols],
+        "reg_labels":  reg_labels,
+        "reg_colors":  reg_colors,
+        "confidence":  confidence,
+        "stats":       stats,
+        "n_regimes":   len(stats),
+        "cur_label":   reg_labels[-1],
+        "cur_conf":    confidence[-1] * 100,
+        "stability":   "Uncertain" if uncertain[-1] else "Stable",
+        "color_map":   color_map,
     }
