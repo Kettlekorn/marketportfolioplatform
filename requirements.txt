@@ -6,6 +6,5 @@ plotly
 sqlalchemy
 requests
 scipy
-hmmlearn
 arch
 scikit-learn

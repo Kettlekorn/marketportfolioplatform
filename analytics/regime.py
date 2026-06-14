@@ -3,18 +3,139 @@
 No look-ahead bias: regime labels at time t depend only on observations 0..t.
 """
 
-import warnings
-warnings.filterwarnings("ignore", message=".*not converging.*", module="hmmlearn")
-warnings.filterwarnings("ignore", message=".*Model is not converging.*")
-
 import numpy as np
 import pandas as pd
 import streamlit as st
 import yfinance as yf
-from hmmlearn import hmm
 from scipy.stats import multivariate_normal
+from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from arch import arch_model
+
+# ---------------------------------------------------------------------------
+# Pure-numpy Gaussian HMM (diagonal covariance) — replaces hmmlearn
+# ---------------------------------------------------------------------------
+
+class _GaussianHMM:
+    """Gaussian HMM with diagonal covariance, implemented in pure numpy/scipy.
+
+    Matches the hmmlearn.GaussianHMM interface used by this module so no other
+    code needs to change.  Uses Baum-Welch EM with KMeans initialisation.
+    """
+
+    def __init__(self, n_components: int, covariance_type: str = "diag",
+                 n_iter: int = 500, tol: float = 1e-4, random_state=None):
+        self.n_components = n_components
+        self.n_iter = n_iter
+        self.tol = tol
+        self.random_state = random_state
+
+    def _log_emit(self, X: np.ndarray) -> np.ndarray:
+        T, D = X.shape
+        K = self.n_components
+        out = np.empty((T, K))
+        log2pi = D * np.log(2 * np.pi)
+        for k in range(K):
+            diff = X - self.means_[k]
+            log_det = np.sum(np.log(self.covars_[k]))
+            quad = np.sum(diff ** 2 / self.covars_[k], axis=1)
+            out[:, k] = -0.5 * (log2pi + log_det + quad)
+        return out
+
+    def _e_step(self, X: np.ndarray):
+        T, K = len(X), self.n_components
+        log_emit = self._log_emit(X)
+        log_trans = np.log(self.transmat_ + 1e-300)
+        log_init = np.log(self.startprob_ + 1e-300)
+
+        # Forward pass
+        log_alpha = np.empty((T, K))
+        log_alpha[0] = log_init + log_emit[0]
+        for t in range(1, T):
+            log_alpha[t] = (
+                np.logaddexp.reduce(log_alpha[t - 1][:, None] + log_trans, axis=0)
+                + log_emit[t]
+            )
+
+        # Backward pass
+        log_beta = np.zeros((T, K))
+        for t in range(T - 2, -1, -1):
+            log_beta[t] = np.logaddexp.reduce(
+                log_trans + log_emit[t + 1] + log_beta[t + 1], axis=1
+            )
+
+        # State posteriors γ
+        log_gamma = log_alpha + log_beta
+        log_sum = np.logaddexp.reduce(log_gamma, axis=1, keepdims=True)
+        gamma = np.exp(log_gamma - log_sum)
+
+        # Two-slice posteriors ξ  (T-1, K, K)
+        log_xi = (
+            log_alpha[:-1, :, None]
+            + log_trans[None, :, :]
+            + (log_emit[1:] + log_beta[1:])[:, None, :]
+        )
+        xi_flat_sum = np.logaddexp.reduce(log_xi.reshape(T - 1, -1), axis=1)
+        xi = np.exp(log_xi - xi_flat_sum[:, None, None])
+
+        ll = float(np.logaddexp.reduce(log_alpha[-1]))
+        return gamma, xi, ll
+
+    def fit(self, X: np.ndarray) -> "_GaussianHMM":
+        rng = np.random.RandomState(self.random_state)
+        T, D = X.shape
+        K = self.n_components
+
+        km = KMeans(n_clusters=K, random_state=int(rng.randint(10000)), n_init=3)
+        labels = km.fit_predict(X)
+        self.means_ = km.cluster_centers_.copy()
+        self.covars_ = np.array([
+            np.var(X[labels == k], axis=0) + 1e-4 if np.sum(labels == k) > 1
+            else np.full(D, 0.1)
+            for k in range(K)
+        ])
+        self.transmat_ = np.full((K, K), 1.0 / K)
+        self.startprob_ = np.full(K, 1.0 / K)
+
+        prev_ll = -np.inf
+        for _ in range(self.n_iter):
+            gamma, xi, ll = self._e_step(X)
+            if abs(ll - prev_ll) < self.tol:
+                break
+            prev_ll = ll
+
+            # M-step
+            self.startprob_ = gamma[0] + 1e-300
+            self.startprob_ /= self.startprob_.sum()
+
+            self.transmat_ = xi.sum(axis=0) + 1e-300
+            self.transmat_ /= self.transmat_.sum(axis=1, keepdims=True)
+
+            for k in range(K):
+                w = gamma[:, k:k+1]
+                wsum = w.sum() + 1e-300
+                self.means_[k] = (w * X).sum(axis=0) / wsum
+                diff = X - self.means_[k]
+                self.covars_[k] = (w * diff ** 2).sum(axis=0) / wsum + 1e-4
+
+        return self
+
+    def score(self, X: np.ndarray) -> float:
+        """Total log-likelihood (matches hmmlearn convention)."""
+        T, K = len(X), self.n_components
+        log_emit = self._log_emit(X)
+        log_trans = np.log(self.transmat_ + 1e-300)
+        log_init = np.log(self.startprob_ + 1e-300)
+
+        log_alpha = np.empty((T, K))
+        log_alpha[0] = log_init + log_emit[0]
+        for t in range(1, T):
+            log_alpha[t] = (
+                np.logaddexp.reduce(log_alpha[t - 1][:, None] + log_trans, axis=0)
+                + log_emit[t]
+            )
+        return float(np.logaddexp.reduce(log_alpha[-1]))
+
 
 FEATURE_COLS = ["log_return", "realized_vol", "volume_ratio", "hl_range"]
 
@@ -83,7 +204,7 @@ def _train_best_hmm(
         best_run, best_run_ll = None, -np.inf
         for seed in range(5):
             try:
-                m = hmm.GaussianHMM(
+                m = _GaussianHMM(
                     n_components=n, covariance_type="diag",
                     n_iter=500, random_state=seed, tol=1e-4,
                 )
