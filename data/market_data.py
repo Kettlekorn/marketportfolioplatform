@@ -3,8 +3,8 @@
 All market data calls must go through this module — no yfinance imports elsewhere.
 """
 
+import time
 import xml.etree.ElementTree as ET
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -332,39 +332,33 @@ def get_insider_transactions_raw(ticker: str) -> pd.DataFrame:
     except Exception:
         return pd.DataFrame()
 
-    forms   = recent.get("form", [])
-    dates   = recent.get("filingDate", [])
-    accs    = recent.get("accessionNumber", [])
-    docs    = recent.get("primaryDocument", [])
-    cutoff  = (datetime.now() - timedelta(days=400)).strftime("%Y-%m-%d")
-    cik_int = int(cik)
+    forms    = recent.get("form", [])
+    dates    = recent.get("filingDate", [])
+    accs     = recent.get("accessionNumber", [])
+    docs     = recent.get("primaryDocument", [])
+    cutoff   = (datetime.now() - timedelta(days=400)).strftime("%Y-%m-%d")
+    cik_int  = int(cik)
 
-    # Phase 1: collect up to 60 qualifying filing URLs before fetching anything
-    targets: list[tuple[str, str]] = []
+    all_rows, count = [], 0
     for form, date, acc, doc in zip(forms, dates, accs, docs):
         if form != "4" or date < cutoff:
             continue
-        if len(targets) >= 60:
+        if count >= 60:
             break
         acc_nodash = acc.replace("-", "")
+        # primaryDocument may have an xsl viewer prefix (e.g. xslF345X06/ownership.xml)
+        # — strip it to get the raw XML path
         raw_doc = doc.split("/")[-1] if "/" in doc else doc
         url = f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{acc_nodash}/{raw_doc}"
-        targets.append((url, date))
-
-    # Phase 2: fetch all XML filings in parallel (8 workers stays under EDGAR's 10 req/s limit)
-    def _fetch(url_date: tuple[str, str]) -> list[dict]:
-        url, date = url_date
         try:
-            r = requests.get(url, headers=_EDGAR_HEADERS, timeout=10)
-            r.raise_for_status()
-            return _parse_form4_xml(r.content, date)
+            xml_resp = requests.get(url, headers=_EDGAR_HEADERS, timeout=10)
+            xml_resp.raise_for_status()
+            all_rows.extend(_parse_form4_xml(xml_resp.content, date))
+            time.sleep(0.05)
         except Exception:
-            return []
+            continue
+        count += 1
 
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        batches = ex.map(_fetch, targets)
-
-    all_rows = [row for batch in batches for row in batch]
     return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
 
 
