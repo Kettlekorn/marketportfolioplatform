@@ -382,9 +382,17 @@ def get_institutional_ownership(ticker: str) -> float | None:
 
 @st.cache_data(ttl=600)
 def get_roe(ticker: str) -> float | None:
-    """Return returnOnEquity. None if unavailable."""
-    info = get_ticker_info(ticker)
-    return info.get("returnOnEquity")
+    """Return ROE (net income / stockholders equity) from financial statements."""
+    try:
+        t = yf.Ticker(ticker)
+        net_income = _stmt_val(t.income_stmt, ["Net Income", "Net Income Common Stockholders"])
+        equity = _stmt_val(t.balance_sheet, ["Stockholders Equity", "Common Stock Equity",
+                                              "Total Equity Gross Minority Interest"])
+        if net_income is not None and equity and equity != 0:
+            return net_income / equity
+        return None
+    except Exception:
+        return None
 
 
 @st.cache_data(ttl=600)
@@ -395,13 +403,18 @@ def get_revenue_growth(ticker: str) -> float | None:
 
 @st.cache_data(ttl=600)
 def get_analyst_target_change(ticker: str) -> float | None:
-    """Estimate analyst target-price change % vs current price as a proxy for estimate revisions."""
+    """Analyst mean price target vs current price — proxy for estimate revisions."""
     try:
-        info = get_ticker_info(ticker)
-        target = info.get("targetMeanPrice")
-        price = info.get("currentPrice") or info.get("regularMarketPrice")
-        if target and price:
-            return (target - price) / price
+        t = yf.Ticker(ticker)
+        price = t.fast_info.last_price
+        if not price:
+            return None
+        targets = t.analyst_price_targets
+        target = targets.get("mean") if isinstance(targets, dict) else None
+        if target is None:
+            target = get_ticker_info(ticker).get("targetMeanPrice")
+        if target and price != 0:
+            return (float(target) - price) / price
         return None
     except Exception:
         return None
